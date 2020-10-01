@@ -1,8 +1,9 @@
 <?php 
+declare(encoding='UTF-8');
 error_reporting(E_ALL);
 ob_implicit_flush();
     define('PORT',"8000");
-    define('HOST',"192.168.0.101");
+    define('HOST',"192.168.0.100");
     require("dataBase.php");
 
    
@@ -28,7 +29,8 @@ ob_implicit_flush();
    
     $arr1 = [];
     
-
+    $usersArray = array();
+    echo $socket . "\r\n";
     $clientSocketArray = array($socket);
 
     while(true){
@@ -42,7 +44,7 @@ ob_implicit_flush();
 
             $clientSocketArray[] = $newSocket;
 
-            $header = socket_read($newSocket,1024);
+            $header = socket_read($newSocket,10000);
 
             sendHeaders($header,$newSocket,HOST,PORT);
 
@@ -50,7 +52,7 @@ ob_implicit_flush();
 
             $connectionACK = newConnectionACK($client_ip_address);
 
-            send($connectionACK,$clientSocketArray);
+            // send($connectionACK,$clientSocketArray);
             
             $newSocketArrayIndex = array_search($socket,$newSocketArray);
 
@@ -59,28 +61,83 @@ ob_implicit_flush();
 
         foreach($newSocketArray as $newSocketArrayResource){
 
-            while(socket_recv($newSocketArrayResource,$socketData,1024,0) >= 1){
+            while(socket_recv($newSocketArrayResource,$socketData,10000,0) >= 1){
                 $socketMessage = unseal($socketData);
                 $socketObj = json_decode($socketMessage);
+                echo $socketMessage;
+                switch($socketObj->type){
+                    case 'NEWMESSAGETOUSER':
+                        $interlocutor = $socketObj->interlocutor;
+                        echo $interlocutor . "\r\n";
+                        echo $socketObj->chat_user . "\r\n";
+                        $chatMessage = createChatMessage($socketObj->chat_user,$socketObj->interlocutor,$socketObj->chat_message);
+                        
+                        send($chatMessage,$interlocutor,$socketObj->chat_user,$usersArray);
+                        addMessageToDB($socketObj->chat_user,$socketObj->chat_id,$socketObj->chat_message);
+                    break;
+                    case 'GETUSER':
+                        $user = $socketObj->chat_user;
+                        $usersArray[] = array(
+                                "socket" => $newSocketArrayResource,
+                                "user" => $user
+                        );
+                        echo "---------------------------------------\r\n";
+                        // foreach($usersArray as $user){
+                        //     echo $user["socket"] . "   " . $user["user"] . "\r\n";
+                        // }
+                        echo  $user . "\r\n";
+                        $massString = check_for_unchecked_messages($user);
+                        echo  $massString  . "lolo\r\n";
+                        if($massString){
+                            
+                            $message = createMessageOfNew($user,$massString);
+                            sendUnChecked($message,$user,$usersArray);
+                        }
+                        
+                        
+                    break;
+                    case 'LEAVEUSER':
+                        $username = $socketObj->chat_user;
+                        foreach($usersArray as $user){
+                            if($user['user'] === $username){
+                                $newSocketArrayIndex = array_search($user,$usersArray);
+                                unset($usersArray[$newSocketArrayIndex]);
+                                echo $user["user"] . "  leaved " . "\r\n";
+                            }
+                            
+                        }
+                    break;
+                    case 'UPDATETOCHECK':
+                        updateToCheck($socketObj->chat_user,$socketObj->chat_id);
+                    break;
+                    
+                }
+                
 
-                $chatMessage = createChatMessage($socketObj->chat_user,$socketObj->chat_message);
-
-                send($chatMessage,$clientSocketArray);
+                
 
                 break 2;
             }
 
-            $socketData = @socket_read($newSocketArrayResource,1024,PHP_NORMAL_READ);
+            $socketData = @socket_read($newSocketArrayResource,10000,PHP_NORMAL_READ);
             if($socketData === false){
                 socket_getpeername($newSocketArrayResource,$client_ip_address);
 
                 $connectionACK = newDisconnectedACK($client_ip_address);
 
-                send($connectionACK,$clientSocketArray);
+                // send($connectionACK,$clientSocketArray);
 
                 $newSocketArrayIndex = array_search($newSocketArrayResource,$clientSocketArray);
 
                 unset($clientSocketArray[$newSocketArrayIndex]);
+
+                foreach($usersArray as $user){
+                    if($user['socket'] == $newSocketArrayResource){
+                        $newSocketArrayIndex = array_search($user,$usersArray);
+                        unset($usersArray[$newSocketArrayIndex]);
+                    }
+                    
+                }
             }
 
         }
@@ -91,20 +148,28 @@ ob_implicit_flush();
     socket_close($socket);
 
 
-    function createChatMessage($username,$messageStr){
-        $messageArray['user'] = $username;
-        $messageArray['type'] = 'chat-box';
-        $messageArray['message'] = $messageStr;
+   
 
-
+    function createChatMessage($username,$interlocutor,$messageStr){
+        $messageArray['type'] = 'NEWMESSAGE';
+        $messageArray['interlocutor'] = $interlocutor;
+        $messageArray['sender'] = $username;
+        $messageArray['message'] = $messageStr;  
         return seal(json_encode($messageArray));
     }
 
-
+    function createMessageOfNew($username,$messageStr){
+        $messageArray['type'] = 'UNCHECKED';
+        $messageArray['user'] = $username; 
+        $messageArray['message'] = $messageStr;
+        
+        return seal(json_encode($messageArray));
+    }
 
     function unseal($socketData){
-        $length = ord($socketData[1]);
-
+        $length = ord($socketData[1]) & 127;
+        echo $socketData[1] . "\r\n";
+        echo $length . "\r\n";
         if($length == 126){
             $mask = substr($socketData,4,4);
             $data = substr($socketData,8);
@@ -184,9 +249,80 @@ ob_implicit_flush();
         return $header.$messageArray;
     }
 
-    function send($message,$array){
+    function sendUnChecked($message,$myname,$array){
         $messageLength = strlen($message);
+        echo "trysend to " . $myname . "\r\n";
+        echo $message;
         foreach($array as $clientSocket){
-            @socket_write($clientSocket,$message,$messageLength);
+            if($clientSocket["user"] == $myname){
+                @socket_write($clientSocket["socket"],$message,$messageLength);
+                echo "message sended to user " . $myname;
+            }
+        
+    }
+    }
+
+    function send($message,$interlocutor,$myname,$array){
+        $messageLength = strlen($message);
+        echo "trysend to " . $interlocutor . "\r\n";
+        echo json_encode($array);
+        foreach($array as $clientSocket){
+                // echo " " . $clientSocket["user"] . "\r\n";
+           
+            if($clientSocket["user"] == $interlocutor){
+                @socket_write($clientSocket["socket"],$message,$messageLength);
+                echo "message sended to user " . $interlocutor;
+            }
+            elseif($clientSocket["user"] == $myname){
+                @socket_write($clientSocket["socket"],$message,$messageLength);
+                echo "message sended to user " . $interlocutor;
+            }
+            
+        }
+    }
+
+
+    function addMessageToDB($sender,$chat_id,$message){
+        global $mysqli;
+            $queryInsert = mysqli_query($mysqli,"INSERT INTO `$chat_id` (message,sender,ischecked) VALUES ('$message','$sender',0)");
+            if($queryInsert){
+                echo "good\r\n";
+            }else echo "can`t make a resolve";     
+    }
+
+
+
+    function updateToCheck($user,$chat_id){
+        global $mysqli;
+        $query = mysqli_query($mysqli,"UPDATE `$chat_id` SET ischecked=1 WHERE sender<>'$user'");
+        if($query) echo 'checked from ' . $user . "\r\n";
+    }
+
+
+
+    function check_for_unchecked_messages($user){
+        global $mysqli;
+        
+        $mass = array();
+        $queryIsCheck = mysqli_query($mysqli,"SELECT chats FROM users WHERE username = '$user'");
+        if($queryIsCheck){
+            $assoc = mysqli_fetch_assoc($queryIsCheck);
+            $tablename = $assoc['chats']; 
+            $query = mysqli_query($mysqli,"SELECT * FROM `$tablename`");
+            if($query){
+                $num = mysqli_num_rows($query);
+            for($i = 0; $i < $num; $i++){
+                $assocCheck = mysqli_fetch_assoc($query);
+                // echo json_encode($assocCheck) . "loliiii\r\n";
+                $chat_id = $assocCheck['chatid'];
+                $queryExist = mysqli_query($mysqli,"SELECT * FROM `$chat_id` WHERE ischecked = 0 AND sender<>'$user'");
+                while($assocEx = mysqli_fetch_assoc($queryExist)){
+                    $mass[] = $assocEx;
+                }
+            }
+            }
+            
+            
+            return json_encode($mass);
         }
     }
