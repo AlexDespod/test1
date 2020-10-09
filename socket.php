@@ -110,6 +110,14 @@ ob_implicit_flush();
                     case 'UPDATETOCHECK':
                         updateToCheck($socketObj->chat_user,$socketObj->chat_id);
                     break;
+                    case 'REQUESTTOFRIENDSSHIP':
+                        echo "\r\nrequesttofriendship";
+                        // $message = requestToAddFriend($socketObj->chat_user,$socketObj->interlocutor);
+                        // if(is_string($message)){
+                        //     sendFriedsShipRequest($message,$socketObj->interlocutor,$usersArray);
+                        // }
+                    break;
+                    
                     
                 }
                 
@@ -281,6 +289,15 @@ ob_implicit_flush();
         }
     }
 
+    function sendFriedsShipRequest($message,$interlocutor,$array){
+        echo "trysend to " . $interlocutor . "\r\n";
+        foreach($array as $clientSocket){ 
+            if($clientSocket["user"] == $interlocutor){
+                @socket_write($clientSocket["socket"],$message,$messageLength);
+                echo "message sended to user " . $interlocutor;
+            }      
+        }
+    }
 
     function addMessageToDB($sender,$chat_id,$message){
         global $mysqli;
@@ -320,9 +337,21 @@ ob_implicit_flush();
                     $mass[] = $assocEx;
                 }
             }
-            }
-            
-            
+            }  
             return json_encode($mass);
+        }
+    }
+
+    function requestToAddFriend($name,$interlocutor){
+        global $mysqli;
+        $queryCheck = mysqli_query($mysqli,"SELECT * FROM friends WHERE (user1='$name' AND user2='$interlocutor') OR (user2='$name' AND user1='$interlocutor')");
+        if($queryCheck){
+            if($num = mysqli_num_rows($queryCheck) < 1){
+                $query = mysqli_query($mysqli,"INSERT INTO friends (user1,user2) VALUES ('$name','$interlocutor')");
+                if($query){
+                    return seal(json_encode(array("type" => "REQUESTTOFRIENDSSHIPTOME","user" => $name))); 
+                 }
+        }
+        return false;
         }
     }

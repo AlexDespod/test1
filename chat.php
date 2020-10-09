@@ -1,4 +1,9 @@
 <?php
+    header('Content-Type: application/json');
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type');
+    header('Access-Control-Allow-Credentials: true');
  $json = file_get_contents("php://input");
  if(isset($json)){
     $obj = json_decode($json,true);
@@ -27,7 +32,9 @@
                 case 'GETMESSAGES':
                     getmessages($chatid);
                     break;
-                    
+                case 'GETFRIENDSLIST':
+                    getFriedsList($user_name);
+                    break;  
             }
     }
 }
@@ -115,6 +122,22 @@
                 }               
          }  
          
+    function getFriedsList($name){
+        global $mysqli;
+        $query = mysqli_query($mysqli,"SELECT friends.id,friends.user1,friends.user2,profiles.avatar FROM friends JOIN profiles ON (friends.user1 = profiles.name OR friends.user2 = profiles.name) WHERE ((friends.user1='$name' AND profiles.name<>'$name') OR (friends.user2='$name'AND profiles.name<>'$name'))");
+        if($num_rows = mysqli_num_rows($query) > 0){
+            $massToSend = [];
+            while ( $all = mysqli_fetch_assoc($query)) {
+                    $myKey = array_search($name,$all);
+                    if($myKey == "user1"){
+                     $massToSend[] = array("friend"=>$all['user2'],"id"=>$all['id'],"avatar"=>$all['avatar']);
+                    }else {
+                     $massToSend[] = array("friend"=>$all['user1'],"id"=>$all['id'],"avatar"=>$all['avatar']);
+                    }            
+            }
+            echo json_encode($massToSend);
+        }  
+    }
          
    function getmessages($chat_id){
     global $mysqli;
